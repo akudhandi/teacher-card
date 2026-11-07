@@ -57,6 +57,11 @@ def generate_documents(
     gender: str = "Random",
     document_types: Optional[List[str]] = None,
     output_dir: str = "",
+    seed: Optional[int] = None,
+    watermark: bool = True,
+    watermark_text: str = "",
+    format: str = "png",
+    photo_path: str = "",
 ) -> dict:
     """Generate teacher verification documents (employment letter, teacher ID, teaching license).
 
@@ -69,6 +74,14 @@ def generate_documents(
         gender: 'Random', 'Male', or 'Female' — selects which photo pool is used.
         document_types: Which documents to render. Omit for all. e.g. ['employment_letter', 'teacher_id'].
         output_dir: Where to save PNGs (relative to project root). Defaults to 'output'.
+        seed: Optional integer for reproducible output. Same seed + inputs gives
+            identical documents (aside from date fields), useful for tests and demos.
+        watermark: Stamp a non-authentic banner on rendered documents. Defaults to
+            True so demo output cannot be mistaken for a real credential.
+        watermark_text: Override the banner text. Empty uses the default.
+        format: Output format — 'png' (default), 'jpg', or 'pdf'.
+        photo_path: Optional absolute path to a profile photo file for this
+            person. Overrides the bundled photo pool.
 
     Returns:
         Dict with 'files' (absolute paths), 'count', and 'output_dir'.
@@ -84,6 +97,9 @@ def generate_documents(
     if "all" in types:
         types = gen.get_document_types()
 
+    from countries.utils import format_extension
+    ext = format_extension(format)
+
     # Consistent photo per person (same mechanism as the GUI)
     gen._current_person_id = f"{first_name}_{last_name}".lower()
     gen._current_gender = gender
@@ -93,20 +109,24 @@ def generate_documents(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     from datetime import datetime
-    import random
 
     files = []
     for dtype in types:
-        data = gen.generate_document(
+        data = gen.generate_document_seeded(
             doc_type=dtype,
             first=first_name,
             last=last_name,
             school=school,
             position=position,
             dob=date_of_birth,
+            seed=seed,
+            watermark=watermark,
+            watermark_text=watermark_text or None,
+            fmt=format,
+            photo_path=photo_path or None,
         )
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{country}_{dtype}_{first_name.lower()}_{last_name.lower()}_{stamp}.png"
+        filename = f"{country}_{dtype}_{first_name.lower()}_{last_name.lower()}_{stamp}{ext}"
         path = out_dir / filename
         path.write_bytes(data)
         files.append(str(path))
@@ -115,6 +135,7 @@ def generate_documents(
         "country": country,
         "school": school["name"],
         "document_types": types,
+        "format": format,
         "files": files,
         "count": len(files),
         "output_dir": str(out_dir),

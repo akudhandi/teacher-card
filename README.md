@@ -23,6 +23,8 @@
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage — MCP server](#usage--mcp-server)
+- [Command-line interface](#command-line-interface)
+- [Testing](#testing)
 - [Legacy GUI](#legacy-gui)
 - [Project structure](#project-structure)
 - [Adding a new country](#adding-a-new-country)
@@ -197,6 +199,11 @@ No arguments. Returns one result item per country — `{ code, name, document_ty
 | `gender` | string | — | `"Random"` | `"Random"`, `"Male"`, or `"Female"` — selects the profile-photo pool. |
 | `document_types` | string[] | — | all types | Which documents to render, e.g. `["employment_letter", "teacher_id"]`. |
 | `output_dir` | string | — | `output/` | Where to save PNGs (relative to the server's working dir). |
+| `seed` | int | — | — | Reproducible output: same seed + inputs gives identical documents (aside from date fields). Useful for tests and demos. |
+| `watermark` | bool | — | `true` | Stamps a repeating "SAMPLE - NOT A VALID DOCUMENT" banner so demo/test output is never mistaken for a real credential. |
+| `watermark_text` | string | — | — | Override the banner text. Empty uses the default. |
+| `format` | string | — | `png` | Output format: `png`, `jpg`, or `pdf`. |
+| `photo_path` | string | — | — | Absolute path to a profile photo for this person, overriding the bundled photo pool. |
 
 Returns `{ country, school, document_types, files, count, output_dir }` — `files` are absolute PNG paths.
 
@@ -245,6 +252,42 @@ Generated PNGs are written to `output/` (or the `output_dir` you pass).
 
 ---
 
+## Command-line interface
+
+A batch CLI ships alongside the MCP server for demos, fixtures, and galleries. Installed as `yowes-cli`, or run as `python cli.py`.
+
+```bash
+# List countries and their document types
+yowes-cli list
+
+# Generate all document types for a country using its built-in demo persona
+yowes-cli generate --country us --format pdf --seed 1234
+
+# Override the person and pick a single document
+yowes-cli generate --country uk --first Jane --last Doe \
+  --document-types teacher_id --format jpg --no-watermark --out output/uk
+
+# Render every country x document type and build a browsable HTML index
+yowes-cli gallery --out docs/demo
+```
+
+`generate` defaults: first school for the country, the built-in persona from `countries/fixtures.py`, seed `1234`, watermark on. Use `--photo path/to/photo.jpg` to override the profile photo for a person.
+
+---
+
+## Testing
+
+The generator ships with a pytest suite covering every country's first document type, full document coverage for the US, deterministic seeding, watermarking, output formats (png/jpg/pdf), the CLI (list/generate/gallery), and input/photo hardening.
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+Determinism: pass `seed=<int>` to `generate_documents` (or `generate_document_seeded`) to get byte-identical output for the same inputs and date. Watermarking is on by default and can be disabled with `watermark=false`.
+
+---
+
 ## Legacy GUI
 
 A tkinter (CustomTkinter) GUI is still available for manual use. The core generation logic is shared.
@@ -262,12 +305,15 @@ python main_gui.py        # on Windows, use run.bat (sets TCL_LIBRARY)
 ```
 yowes/
 ├── countries/            # Document generation core (package)
-│   ├── base.py           # CountryGenerator ABC (contract)
-│   ├── utils.py          # Fonts, profile photos, shared helpers
+│   ├── base.py           # CountryGenerator ABC (contract) + seeded/watermark wrapper
+│   ├── utils.py          # Fonts, profile photos, watermark, format encoding, helpers
+│   ├── fixtures.py       # Fixed demo personas per country
 │   ├── foto/             # Bundled profile photos (package data)
 │   ├── fonts/            # Bundled DejaVu fonts (package data)
 │   └── <country>/        # One package per country
 ├── mcp_server.py         # MCP server exposing tools
+├── cli.py                # Batch CLI (list / generate / gallery)
+├── tests/                # pytest suite
 ├── main_gui.py           # Legacy tkinter GUI
 ├── docs/examples/        # Sample rendered documents
 ├── pyproject.toml        # Packaging, deps, entry point

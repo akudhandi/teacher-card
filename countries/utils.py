@@ -2,10 +2,16 @@
 Utility functions shared across all countries
 """
 
-from PIL import Image, ImageFont
+from PIL import Image, ImageFont, ImageDraw
+from io import BytesIO
 from pathlib import Path
 import os
 import random
+import re
+import warnings
+
+# Default banner text stamped on demo/test documents.
+DEFAULT_WATERMARK_TEXT = "SAMPLE - NOT A VALID DOCUMENT"
 
 
 def load_font(size_or_name, size=None, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -68,11 +74,43 @@ def load_font(size_or_name, size=None, bold: bool = False) -> ImageFont.FreeType
             continue
     
     # Ultimate fallback
+    warnings.warn(
+        "load_font: no TrueType font found on this system; falling back to the "
+        "built-in bitmap font. Text layout and sizing will differ from the "
+        "bundled DejaVu Sans.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
     return ImageFont.load_default()
 
 
 # Global cache for photos per session (name-based)
 _PHOTO_CACHE = {}
+
+# Optional explicit photo file for the person currently being rendered.
+_ACTIVE_PHOTO_PATH = None
+
+
+def set_active_photo(path):
+    """Set (or clear with None) an explicit photo file for the next render."""
+    global _ACTIVE_PHOTO_PATH
+    _ACTIVE_PHOTO_PATH = str(path) if path else None
+
+
+def validate_dob(dob: str) -> str:
+    """Validate a display date-of-birth string.
+
+    The exact date format varies per country, so this only enforces that a
+    value is present and contains a four-digit year. Raises ValueError otherwise.
+    """
+    value = (dob or "").strip()
+    if not value:
+        raise ValueError("date_of_birth is required.")
+    if not re.search(r"\b(1[89]\d{2}|20\d{2})\b", value):
+        raise ValueError(
+            f"date_of_birth '{dob}' must contain a four-digit year (e.g. 12/05/1988)."
+        )
+    return value
 
 def get_profile_photo(size: tuple = (280, 340), person_id: str = None, gender: str = "Random") -> Image.Image:
     """
@@ -93,7 +131,19 @@ def get_profile_photo(size: tuple = (280, 340), person_id: str = None, gender: s
         if cached_photo:
             return cached_photo.resize(size, Image.Resampling.LANCZOS)
         return None
-    
+
+    # Explicit per-person photo file takes priority over the bundled pool.
+    if _ACTIVE_PHOTO_PATH and Path(_ACTIVE_PHOTO_PATH).is_file():
+        try:
+            photo = Image.open(_ACTIVE_PHOTO_PATH)
+            if photo.mode != "RGB":
+                photo = photo.convert("RGB")
+            if person_id:
+                _PHOTO_CACHE[person_id] = photo.copy()
+            return photo.resize(size, Image.Resampling.LANCZOS)
+        except Exception:
+            pass
+
     try:
         # Foto directory: override via YOWES_FOTO_DIR, else bundled with the package
         foto_dir = Path(os.environ.get("YOWES_FOTO_DIR", "")) if os.environ.get("YOWES_FOTO_DIR") else Path(__file__).parent / "foto"
@@ -166,3 +216,119 @@ def generate_initials_avatar(first: str, last: str, size: tuple = (280, 340),
         pass
     
     return photo
+
+
+def apply_watermark(
+    image: Image.Image,
+    text: str = DEFAULT_WATERMARK_TEXT,
+    angle: int = 30,
+    opacity: int = 60,
+    color: tuple = (200, 0, 0),
+) -> Image.Image:
+    """Stamp a repeating diagonal banner across an image.
+
+    Used to clearly mark demo/test output as non-authentic. Tiles `text` across
+    the whole canvas at a fixed angle, then composites it over a copy of the
+    source so the original is never mutated in place.
+    """
+    original_mode = image.mode
+    base = image.convert("RGBA")
+    w, h = base.size
+
+    font_size = max(20, int(min(w, h) * 0.045))
+    font = load_font(font_size, bold=True)
+    text = text or DEFAULT_WATERMARK_TEXT
+
+    bbox = font.getbbox(text)
+    text_w = max(1, bbox[2] - bbox[0])
+    text_h = max(1, bbox[3] - bbox[1])
+
+    # Build one tile large enough that a rotated copy still covers the canvas seam.
+    tile_w = text_w + font_size * 6
+    tile_h = max(text_h * 3, int(text_h * 2.5))
+    tile = Image.new("RGBA", (tile_w, tile_h), (0, 0, 0, 0))
+    tile_draw = ImageDraw.Draw(tile)
+    row_step = max(text_h * 2, font_size * 3)
+    for row_y in range(0, tile_h, row_step):
+        tile_draw.text((font_size, row_y), text, font=font, fill=(*color, opacity))
+
+    tile = tile.rotate(angle, expand=True, resample=Image.BICUBIC)
+    tile_w, tile_h = tile.size
+
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    for x in range(-tile_w, w + tile_w, tile_w):
+        for y in range(-tile_h, h + tile_h, tile_h):
+            layer.alpha_composite(tile, (x, y))
+
+    merged = Image.alpha_composite(base, layer)
+    return merged.convert(original_mode if original_mode != "P" else "RGB")
+
+
+def finalize_document(
+    data: bytes,
+    watermark: bool = True,
+    text: str = DEFAULT_WATERMARK_TEXT,
+) -> bytes:
+    """Apply optional watermarking to encoded PNG bytes and re-encode to PNG."""
+    if not watermark:
+        return data
+    with Image.open(BytesIO(data)) as img:
+        img.load()
+        stamped = apply_watermark(img, text=text)
+    buffer = BytesIO()
+    stamped.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+# Encodable output formats -> file extension and PIL format name.
+SUPPORTED_FORMATS = {
+    "png": (".png", "PNG"),
+    "jpg": (".jpg", "JPEG"),
+    "jpeg": (".jpg", "JPEG"),
+    "pdf": (".pdf", "PDF"),
+}
+
+
+def normalize_format(fmt: str) -> str:
+    """Lowercase + validate an output format, defaulting to png."""
+    fmt = (fmt or "png").strip().lower().lstrip(".")
+    if fmt not in SUPPORTED_FORMATS:
+        raise ValueError(
+            f"Unsupported format '{fmt}'. Choose from: {sorted(set(SUPPORTED_FORMATS))}"
+        )
+    return fmt
+
+
+def format_extension(fmt: str) -> str:
+    """Return the file extension (with dot) for a given output format."""
+    return SUPPORTED_FORMATS[normalize_format(fmt)][0]
+
+
+def encode_document(data: bytes, fmt: str = "png", quality: int = 90, dpi: int = 300) -> bytes:
+    """Re-encode rendered PNG bytes into png/jpg/pdf.
+
+    Args:
+        data: PNG bytes as produced by a country's generate_document.
+        fmt: Target format ('png', 'jpg', or 'pdf').
+        quality: JPEG quality (1-100), ignored for other formats.
+        dpi: Resolution embedded in PDF output; controls the page's physical size.
+    """
+    fmt = normalize_format(fmt)
+    if fmt == "png":
+        return data
+
+    pil_format = SUPPORTED_FORMATS[fmt][1]
+    with Image.open(BytesIO(data)) as img:
+        img.load()
+        buffer = BytesIO()
+        if pil_format == "JPEG":
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(buffer, format="JPEG", quality=quality)
+        elif pil_format == "PDF":
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(buffer, format="PDF", resolution=dpi)
+        else:
+            img.save(buffer, format=pil_format)
+    return buffer.getvalue()

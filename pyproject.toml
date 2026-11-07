@@ -13,11 +13,23 @@ dependencies = [
     "mcp>=2.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 yowes-mcp = "mcp_server:main"
+yowes-cli = "cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: renders the full document matrix (all countries x all doc types)",
+]
 
 [tool.setuptools]
-py-modules = ["mcp_server"]
+py-modules = ["mcp_server", "cli"]
 
 [tool.setuptools.packages.find]
 include = ["countries", "countries.*"]

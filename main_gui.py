@@ -44,6 +44,8 @@ class CanvaEducationGUI(ctk.CTk):
         self.school_var = ctk.StringVar()
         self.position_var = ctk.StringVar()
         self.auto_generate_var = ctk.BooleanVar(value=True)
+        self.watermark_var = ctk.BooleanVar(value=True)
+        self.format_var = ctk.StringVar(value="png")
         
         # Generator
         self.generator = None
@@ -187,6 +189,24 @@ class CanvaEducationGUI(ctk.CTk):
             justify="left"
         )
         self.doc_info_label.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+
+        self.watermark_check = ctk.CTkCheckBox(
+            doc_frame,
+            text="Watermark as SAMPLE (demo/test)",
+            variable=self.watermark_var,
+            font=ctk.CTkFont(size=13)
+        )
+        self.watermark_check.grid(row=3, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+
+        ctk.CTkLabel(doc_frame, text="Format:").grid(row=4, column=0, padx=10, pady=(0, 10), sticky="w")
+        self.format_combo = ctk.CTkComboBox(
+            doc_frame,
+            variable=self.format_var,
+            values=["png", "jpg", "pdf"],
+            state="readonly",
+            width=200
+        )
+        self.format_combo.grid(row=4, column=1, padx=10, pady=(0, 10), sticky="ew")
         
         # ===== Personal Information =====
         personal_frame = ctk.CTkFrame(left_panel)
@@ -655,21 +675,25 @@ class CanvaEducationGUI(ctk.CTk):
                 self.update_status(f"Generating {dtype}... ({idx+1}/{total})")
                 
                 try:
-                    # Generate document (returns bytes)
-                    doc_bytes = self.generator.generate_document(
+                    # Generate document (returns bytes) with optional SAMPLE watermark
+                    fmt = self.format_var.get()
+                    doc_bytes = self.generator.generate_document_seeded(
                         doc_type=dtype,
                         first=first,
                         last=last,
                         school=school,
                         position=position,
-                        dob=dob
+                        dob=dob,
+                        watermark=self.watermark_var.get(),
+                        fmt=fmt,
                     )
                     
                     if doc_bytes:
                         # Create filename
+                        from countries.utils import format_extension
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         country_code = self.generator.get_country_code()
-                        filename = f"{country_code}_{dtype}_{first.lower()}_{last.lower()}_{timestamp}.png"
+                        filename = f"{country_code}_{dtype}_{first.lower()}_{last.lower()}_{timestamp}{format_extension(fmt)}"
                         file_path = OUTPUT_DIR / filename
                         
                         # Save bytes to file

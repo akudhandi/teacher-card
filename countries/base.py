@@ -95,3 +95,48 @@ class CountryGenerator(ABC):
     def random_position(self) -> str:
         """Get a random teaching position"""
         return random.choice(self.positions)
+
+    def generate_document_seeded(self, doc_type: str, first: str, last: str,
+                                 school: Dict, position: str, dob: str,
+                                 seed=None, watermark: bool = False,
+                                 watermark_text: str = None, fmt: str = "png",
+                                 quality: int = 90, dpi: int = 300,
+                                 photo_path: str = None) -> bytes:
+        """Generate one document with optional deterministic seeding, watermarking and format.
+
+        Args:
+            seed: When set, the RNG is seeded from this value plus the document
+                type and person, so identical inputs yield byte-identical output
+                (ignoring date fields). When None, the global RNG is left alone.
+            watermark: When True, stamps a "SAMPLE" banner over the result.
+            watermark_text: Overrides the default banner text.
+            fmt: Output format — 'png', 'jpg', or 'pdf'.
+            quality: JPEG quality, ignored for other formats.
+            dpi: Resolution embedded in PDF output.
+            photo_path: Optional explicit profile photo file for this person,
+                overriding the bundled photo pool.
+        """
+        from .utils import set_active_photo, validate_dob
+
+        for label, value in (("first_name", first), ("last_name", last), ("position", position)):
+            if not (value or "").strip():
+                raise ValueError(f"{label} is required.")
+
+        dob = validate_dob(dob)
+
+        set_active_photo(photo_path)
+
+        if seed is not None:
+            random.seed(f"{seed}:{doc_type}:{first}:{last}")
+
+        data = self.generate_document(doc_type, first, last, school, position, dob)
+
+        if watermark:
+            from .utils import finalize_document
+            data = finalize_document(data, watermark=True, text=watermark_text)
+
+        if fmt and fmt.lower().lstrip(".") not in ("png",):
+            from .utils import encode_document
+            data = encode_document(data, fmt=fmt, quality=quality, dpi=dpi)
+
+        return data
